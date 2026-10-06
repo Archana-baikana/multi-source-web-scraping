@@ -8,7 +8,7 @@ def test_valid_record():
         "source_url": "https://books.toscrape.com/",
         "name_or_title": "A Light in the Attic",
         "category": "",
-        "price": "£51.77",
+        "price": 51.77,
         "author": "",
         "tags": [],
         "description": "",
@@ -18,13 +18,29 @@ def test_valid_record():
     assert validate_record(record) == []
 
 
-def test_invalid_record():
+def test_invalid_price():
     record = {
         "source": "Books to Scrape",
         "source_url": "https://books.toscrape.com/",
-        "name_or_title": "",
+        "name_or_title": "Test Book",
+        "price": "invalid",
+        "rating": 3,
     }
 
     errors = validate_record(record)
 
-    assert len(errors) > 0
+    assert "price must be numeric" in errors
+
+
+def test_invalid_rating():
+    record = {
+        "source": "Books to Scrape",
+        "source_url": "https://books.toscrape.com/",
+        "name_or_title": "Test Book",
+        "price": 10.5,
+        "rating": 6,
+    }
+
+    errors = validate_record(record)
+
+    assert "rating must be between 1 and 5" in errors

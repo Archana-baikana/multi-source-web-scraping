@@ -1,41 +1,39 @@
 
-REQUIRED_FIELDS = [
-    "source",
-    "source_url",
-    "name_or_title",
-    "category",
-    "price",
-    "author",
-    "tags",
-    "description",
-    "scraped_at",
-]
-
-
 def validate_record(record):
+    """Validate one cleaned record and return validation errors."""
     errors = []
 
-    # Check required fields
-    for field in REQUIRED_FIELDS:
-        if field not in record:
-            errors.append(f"Missing field: {field}")
+    required_fields = [
+        "source",
+        "source_url",
+        "name_or_title",
+    ]
 
-    # Title should not be empty
-    if not record.get("name_or_title"):
-        errors.append("name_or_title is empty")
+    for field in required_fields:
+        if not record.get(field):
+            errors.append(f"{field} is required")
 
-    # Source should not be empty
-    if not record.get("source"):
-        errors.append("source is empty")
+    price = record.get("price")
 
-    # Source URL should not be empty
-    if not record.get("source_url"):
-        errors.append("source_url is empty")
+    if price not in ("", None):
+        if not isinstance(price, (int, float)):
+            errors.append("price must be numeric")
+        elif price < 0:
+            errors.append("price cannot be negative")
+
+    rating = record.get("rating")
+
+    if rating not in ("", None):
+        if not isinstance(rating, int):
+            errors.append("rating must be an integer")
+        elif not 1 <= rating <= 5:
+            errors.append("rating must be between 1 and 5")
 
     return errors
 
 
 def validate_records(records):
+    """Separate valid and invalid records."""
     valid_records = []
     invalid_records = []
 

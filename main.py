@@ -1,9 +1,11 @@
+
+import csv
 import json
 import logging
 import os
+import time
+from collections import Counter
 from datetime import datetime, timezone
-
-import pandas as pd
 
 from scrapers.books_scraper import scrape_books
 from scrapers.quotes_scraper import scrape_quotes
@@ -12,141 +14,359 @@ from processing.validation import validate_records
 from processing.deduplication import deduplicate_records
 
 
-# Create output and logs folders if they don't exist
-os.makedirs("output", exist_ok=True)
-os.makedirs("logs", exist_ok=True)
+OUTPUT_DIR = "output"
+LOG_DIR = "logs"
+
+CSV_PATH = os.path.join(OUTPUT_DIR, "final_dataset.csv")
+JSON_PATH = os.path.join(OUTPUT_DIR, "summary_report.json")
+LOG_PATH = os.path.join(LOG_DIR, "scraper.log")
+
+COLUMNS = [
+    "source",
+    "source_url",
+    "name_or_title",
+    "category",
+    "price",
+    "rating",
+    "author",
+    "tags",
+    "description",
+    "scraped_at",
+]
 
 
-# Configure logging
-logging.basicConfig(
-    filename="logs/scraping.log",
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-)
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(LOG_DIR, exist_ok=True)
+
+
+logger = logging.getLogger("scraper")
+logger.setLevel(logging.INFO)
+
+if not logger.handlers:
+    formatter = logging.Formatter(
+        "%(asctime)s - %(levelname)s - %(message)s"
+    )
+
+    file_handler = logging.FileHandler(
+        LOG_PATH,
+        encoding="utf-8"
+    )
+
+    console_handler = logging.StreamHandler()
+
+    file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+
+
+def prepare_record(record):
+    """Add missing common-schema fields."""
+    record = record.copy()
+
+    record.setdefault("category", "")
+    record.setdefault("price", None)
+    record.setdefault("rating", None)
+    record.setdefault("author", "")
+    record.setdefault("tags", [])
+    record.setdefault("description", "")
+    record.setdefault(
+        "scraped_at",
+        datetime.now(timezone.utc).isoformat()
+    )
+
+    return record
+
+
+def prepare_for_csv(record):
+    """Convert cleaned record into CSV-friendly values."""
+    record = record.copy()
+
+    tags = record.get("tags", [])
+
+    if isinstance(tags, list):
+        record["tags"] = ";".join(tags)
+
+    return record
+
+
+def get_rejection_reasons(invalid_records):
+    """Count validation rejection reasons."""
+    reasons = Counter()
+
+    for item in invalid_records:
+        for error in item.get("errors", []):
+            reasons[error] += 1
+
+    return dict(reasons)
+
+
+def run_source(scraper, source_name):
+    """Run one scraper without stopping the other source."""
+    try:
+        logger.info("%s scraping started", source_name)
+
+        records = scraper()
+
+        logger.info(
+            "%s scraping completed: %d records",
+            source_name,
+            len(records)
+        )
+
+        return records
+
+    except Exception as error:
+        logger.error(
+            "%s scraping failed: %s",
+            source_name,
+            error
+        )
+
+        return []
 
 
 def main():
-    logging.info("Scraping pipeline started")
+    start_time = datetime.now(timezone.utc)
 
-    # 1. Scrape Books
-    try:
-        books = scrape_books()
-        logging.info(f"Books scraped: {len(books)}")
-    except Exception as error:
-        logging.error(f"Books scraping failed: {error}")
-        books = []
+    logger.info("Scraping pipeline started")
 
-    # 2. Scrape Quotes
-    try:
-        quotes = scrape_quotes()
-        logging.info(f"Quotes scraped: {len(quotes)}")
-    except Exception as error:
-        logging.error(f"Quotes scraping failed: {error}")
-        quotes = []
+    # -------------------------------------------------
+    # 1. SCRAPE
+    # -------------------------------------------------
 
-    # 3. Combine raw data
-    records = books + quotes
+    books = run_source(
+        scrape_books,
+        "Books to Scrape"
+    )
 
-    logging.info(f"Total raw records: {len(records)}")
+    quotes = run_source(
+        scrape_quotes,
+        "Quotes to Scrape"
+    )
 
-    # 4. Add common fields
-    for record in records:
-        record.setdefault("category", "")
-        record.setdefault("price", "")
-        record.setdefault("author", "")
-        record.setdefault("tags", [])
-        record.setdefault("description", "")
-        record.setdefault(
-            "scraped_at",
-            datetime.now(timezone.utc).isoformat()
-        )
+    raw_records = books + quotes
 
-    # 5. Clean records
-    cleaned_records = [
-        clean_record(record)
-        for record in records
+    raw_counts = {
+        "Books to Scrape": len(books),
+        "Quotes to Scrape": len(quotes),
+    }
+
+    logger.info(
+        "Total raw records: %d",
+        len(raw_records)
+    )
+
+    # -------------------------------------------------
+    # 2. CLEAN
+    # -------------------------------------------------
+
+    prepared_records = [
+        prepare_record(record)
+        for record in raw_records
     ]
 
-    # 6. Validate records
+    cleaned_records = [
+        clean_record(record)
+        for record in prepared_records
+    ]
+
+    cleaned_counts = Counter(
+        record.get("source", "")
+        for record in cleaned_records
+    )
+
+    logger.info(
+        "Cleaning completed: %d records",
+        len(cleaned_records)
+    )
+
+    # -------------------------------------------------
+    # 3. VALIDATE
+    # -------------------------------------------------
+
     valid_records, invalid_records = validate_records(
         cleaned_records
     )
 
-    logging.info(f"Valid records: {len(valid_records)}")
-    logging.info(f"Invalid records: {len(invalid_records)}")
+    for invalid in invalid_records:
+        logger.warning(
+            "Rejected record: %s",
+            invalid.get("errors")
+        )
 
-    # 7. Deduplicate
-    unique_records = deduplicate_records(valid_records)
+    rejection_reasons = get_rejection_reasons(
+        invalid_records
+    )
+
+    rejected_counts = Counter(
+        record.get("source", "")
+        for item in invalid_records
+        for record in [item.get("record", {})]
+    )
+
+    logger.info(
+        "Validation completed: %d valid, %d rejected",
+        len(valid_records),
+        len(invalid_records)
+    )
+
+    # -------------------------------------------------
+    # 4. DEDUPLICATE
+    # -------------------------------------------------
+
+    unique_records = deduplicate_records(
+        valid_records
+    )
 
     duplicates_removed = (
         len(valid_records) - len(unique_records)
     )
 
-    logging.info(
-        f"Duplicates removed: {duplicates_removed}"
+    logger.info(
+        "Duplicates removed: %d",
+        duplicates_removed
     )
 
-    # 8. Convert to DataFrame
-    dataframe = pd.DataFrame(unique_records)
+    # -------------------------------------------------
+    # 5. CONSOLIDATE
+    # -------------------------------------------------
 
-    # Make sure columns are in the required order
-    columns = [
-        "source",
-        "source_url",
-        "name_or_title",
-        "category",
-        "price",
-        "rating",
-        "author",
-        "tags",
-        "description",
-        "scraped_at",
+    final_records = [
+        prepare_for_csv(record)
+        for record in unique_records
     ]
 
-    for column in columns:
-        if column not in dataframe.columns:
-            dataframe[column] = ""
+    # -------------------------------------------------
+    # 6. SAVE CSV
+    # -------------------------------------------------
 
-    dataframe = dataframe[columns]
+    with open(
+        CSV_PATH,
+        "w",
+        newline="",
+        encoding="utf-8"
+    ) as file:
 
-    # 9. Save CSV
-    csv_path = "output/final_dataset.csv"
-    dataframe.to_csv(
-        csv_path,
-        index=False,
-        encoding="utf-8-sig"
+        writer = csv.DictWriter(
+            file,
+            fieldnames=COLUMNS
+        )
+
+        writer.writeheader()
+
+        for record in final_records:
+            writer.writerow({
+                column: record.get(column, "")
+                for column in COLUMNS
+            })
+
+    logger.info(
+        "CSV saved: %s",
+        CSV_PATH
     )
 
-    # 10. Create summary report
+    # -------------------------------------------------
+    # 7. SUMMARY
+    # -------------------------------------------------
+
+    end_time = datetime.now(timezone.utc)
+
+    duration_seconds = (
+        end_time - start_time
+    ).total_seconds()
+
+    final_counts = Counter(
+        record.get("source", "")
+        for record in unique_records
+    )
+
     summary = {
-        "scraped_at": datetime.now(timezone.utc).isoformat(),
-        "books_scraped": len(books),
-        "quotes_scraped": len(quotes),
-        "total_raw_records": len(records),
-        "valid_records": len(valid_records),
-        "invalid_records": len(invalid_records),
+        "start_time": start_time.isoformat(),
+        "end_time": end_time.isoformat(),
+        "duration_seconds": duration_seconds,
+
+        "raw_records": {
+            "Books to Scrape": raw_counts.get(
+                "Books to Scrape", 0
+            ),
+            "Quotes to Scrape": raw_counts.get(
+                "Quotes to Scrape", 0
+            ),
+            "total": len(raw_records),
+        },
+
+        "records_after_cleaning": {
+            "Books to Scrape": cleaned_counts.get(
+                "Books to Scrape", 0
+            ),
+            "Quotes to Scrape": cleaned_counts.get(
+                "Quotes to Scrape", 0
+            ),
+            "total": len(cleaned_records),
+        },
+
+        "rejected_records": {
+            "Books to Scrape": rejected_counts.get(
+                "Books to Scrape", 0
+            ),
+            "Quotes to Scrape": rejected_counts.get(
+                "Quotes to Scrape", 0
+            ),
+            "total": len(invalid_records),
+        },
+
+        "rejection_reasons": rejection_reasons,
+
         "duplicates_removed": duplicates_removed,
-        "final_records": len(unique_records),
-        "output_file": csv_path,
+
+        "final_records": {
+            "Books to Scrape": final_counts.get(
+                "Books to Scrape", 0
+            ),
+            "Quotes to Scrape": final_counts.get(
+                "Quotes to Scrape", 0
+            ),
+            "total": len(final_records),
+        },
+
+        "output_file": CSV_PATH,
+        "log_file": LOG_PATH,
     }
 
-    json_path = "output/summary_report.json"
+    with open(
+        JSON_PATH,
+        "w",
+        encoding="utf-8"
+    ) as file:
 
-    with open(json_path, "w", encoding="utf-8") as file:
-        json.dump(summary, file, indent=4)
+        json.dump(
+            summary,
+            file,
+            indent=4
+        )
 
-    logging.info("Scraping pipeline completed")
+    logger.info(
+        "Summary saved: %s",
+        JSON_PATH
+    )
 
-    print("Pipeline completed successfully!")
+    logger.info(
+        "Pipeline completed in %.2f seconds",
+        duration_seconds
+    )
+
+    print("\nPipeline completed successfully!")
     print(f"Books scraped: {len(books)}")
     print(f"Quotes scraped: {len(quotes)}")
-    print(f"Total records: {len(records)}")
-    print(f"Valid records: {len(valid_records)}")
-    print(f"Invalid records: {len(invalid_records)}")
+    print(f"Total raw records: {len(raw_records)}")
+    print(f"Rejected records: {len(invalid_records)}")
     print(f"Duplicates removed: {duplicates_removed}")
-    print(f"Final records: {len(unique_records)}")
-    print(f"CSV: {csv_path}")
-    print(f"Summary: {json_path}")
+    print(f"Final records: {len(final_records)}")
+    print(f"CSV: {CSV_PATH}")
+    print(f"Summary: {JSON_PATH}")
+    print(f"Log: {LOG_PATH}")
 
 
 if __name__ == "__main__":

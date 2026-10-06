@@ -33,25 +33,28 @@ Examples of prompts used during development included:
 - Help create pytest tests for the processing modules.
 - Help troubleshoot Python package import errors during pytest execution.
 - Review the project structure and identify missing requirements.
+- Review the implementation against the assignment reference requirements.
 
 ## Parts Assisted by AI
 
-AI assistance contributed to the initial implementation of:
+AI assistance contributed to the initial implementation and development of:
 
 - Scraper structure
 - Pagination approach
+- Shared HTTP client
 - Cleaning functions
 - Validation functions
 - Deduplication logic
 - Main pipeline orchestration
 - Test cases
 - README documentation
+- AI usage documentation
 
 ## Human Verification and Corrections
 
 The generated code was not used blindly.
 
-The implementation was manually executed and verified against the target websites.
+The implementation was manually executed and verified against the target websites and assignment requirements.
 
 Verification included:
 
@@ -59,34 +62,56 @@ Verification included:
 - Confirming 1000 books were scraped
 - Running the Quotes scraper successfully
 - Confirming 100 quotes were scraped
-- Running the complete pipeline
+- Running the complete ETL pipeline
 - Confirming 1100 raw records were processed
 - Confirming 1100 records passed validation
 - Confirming 1 duplicate was removed
 - Confirming 1099 final records were generated
 - Verifying the generated CSV file
 - Verifying the generated JSON summary report
+- Verifying numeric prices and ratings
+- Verifying book detail page URLs
+- Verifying quote authors and tags
+- Verifying page-level logging
 - Running the automated test suite successfully
 
 ## Testing Result
 
-The final test execution produced:
-
-```text
-6 passed
-```
+The final test suite contains 9 tests.
 
 The tests cover:
 
 - Text cleaning
 - Price cleaning
+- Rating cleaning
 - Tag cleaning
+- Quote quotation-mark removal
 - Valid record validation
 - Invalid record validation
-- Duplicate record removal
+- Book duplicate detection
+- Quote duplicate detection
 
 ## Human Responsibility
 
 The final implementation, execution, testing, verification, and submission preparation were reviewed manually.
 
 AI was used as an assistant for development and explanation, while the resulting implementation was tested against the actual assignment requirements.
+
+The final pipeline successfully produced:
+
+```text
+Books scraped:       1000
+Quotes scraped:       100
+Total raw records:   1100
+Rejected records:       0
+Duplicates removed:     1
+Final records:       1099
+```
+
+The generated output files are:
+
+```text
+output/final_dataset.csv
+output/summary_report.json
+logs/scraper.log
+```
